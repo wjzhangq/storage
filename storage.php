@@ -4,7 +4,7 @@
  * @author wjzhangq <wjzhangq@126.com>
  */
 
-class storage
+class storage implements ArrayAccess
 {
     constant MAX_SIZE = 2097152; //2M
     var $db = null;
@@ -49,24 +49,20 @@ class storage
         if ($id)
         {
             //引用次数+1
-            $this[$id]['num'] ++;
-            $info['id'] = $id; //修正id
-            $key = $this->gen_key($info);
+            $this->db['storage'][$id]['num'] ++;
         }
         else
         {
             //将附加信息插入storage表
-            $this->db['storage'][] = $info;
-            $id = key($this->db['storage']);
+            $id = $this->db['storage']->insert($info);
             
             $info['id'] = $id; //修正id
-            $key = $this->gen_key($info);
             
             //保存数据
-            $this->store_data($path, $key);
+            $this->store_data($path, $id);
         }
         
-        return $key;
+        return $id;
     }
     
     /**
@@ -76,10 +72,8 @@ class storage
      * 
      * @return $key
      */
-    private function store_data($path, $key)
-    {
-        $target_path = $this->gen_path($key);
-        
+    private function store_data($path, $id)
+    {   
         if (is_uploaded_file($path))
         {
             move_uploaded_file($path, $target_path) or throw(new Exception('move upload file failure!'));
@@ -98,6 +92,39 @@ class storage
             unset($sql);
         }
         fclose($fp);
+    }
+    
+    
+    //implements
+    function offsetExists($offset)
+    {
+        return isset($this->db['storage'][$offset]);
+    }
+    
+    function offsetGet($offset)
+    {
+        return $this->db['storage'][$offset];
+    }
+    
+    function offsetSet($offset, $value)
+    {
+        return $this->db['storage'][$offset] = $value;
+    }
+    
+    function offsetUnset($offset)
+    {
+        return unset($this->db['storage'][$offset]);
+    }
+    
+    //private
+    private function filetype($str)
+    {
+        return end(explode('.',$str));
+    }
+    
+    private function exists_by_info($info)
+    {
+         return $this->db['storage']->exists(array('hash'=>$info['hash'], 'size'=>$info['size']));
     }
 }
 
