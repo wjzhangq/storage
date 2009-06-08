@@ -308,7 +308,29 @@ class db implements ArrayAccess
     //implements
     function offsetExists($offset)
     {
-        return isset($this->db['storage'][$offset]);
+        $ret_val = false;
+        if (isset($this->tables[$offset]))
+        {
+            $ret_val = true;
+        }
+        else
+        {
+            try
+            {
+                $tmp = new db_table($offset);
+            }
+            catch($e)
+            {
+                $tmp = null;
+            }
+            if ($tmp)
+            {
+                $this->tables[$offset] = $tmp;
+                $ret_val = true;
+            }
+        }
+        
+        return $ret_val;
     }
     
     function offsetGet($offset)
@@ -388,23 +410,56 @@ class db_table implements ArrayAccess
             $ret_val = (bool) $this->db->getOne($sql);
         }
         
-        return false;
+        return $ret_val;
     }
     
     function offsetGet($offset)
     {
+        $ret_val = false;
+        if ($this->table_key)
+        {
+            $sql = "SELECT * FROM " . $this->table_name . " WHERE " . $this->table_key . " = '" . $offset . "'";
+            $ret_val = $this->db->getRow($sql);
+        }
         
-        return $this->db['storage'][$offset];
+        return $ret_val;
     }
     
     function offsetSet($offset, $value)
     {
-        return $this->db['storage'][$offset] = $value;
+        $ret_val = false;
+        if ($this->table_key)
+        {
+            $set= array();
+            foreach($this->table_fileds as $v)
+            {
+                if ($this->table_key == $v) continue; //主键过滤
+
+                if (isset($data[$v]))
+                {
+                    $set[] = $v . '=\'' . $data[$v] . '\'';
+                }
+            }
+            
+            if ($set)
+            {
+                $sql = "UPDATE " . $this->table_name . ' SET ' . implode(', ', $set) .  " WHERE " . $this->table_key . " = '" . $offset . "'";
+                $ret_val = $this->query($sql);
+            }           
+        }
+        
+        return $ret_val;
     }
     
     function offsetUnset($offset)
     {
-        return unset($this->db['storage'][$offset]);
+        $ret_val = false;
+        if ($this->table_key)
+        {
+            $sql = "DELETE FROM " . $this->table_name  . " WHERE " . $this->table_key . " = '" . $offset . "'";
+            $ret_val = $this->db->query($sql);
+        }
+        return $ret_val;
     }
 }
 ?>

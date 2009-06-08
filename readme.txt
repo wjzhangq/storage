@@ -1,5 +1,5 @@
 数据库存储操作方式
-
+还为完成
 
 $path 为要转存的文件路径， $filename上传时文件名, $key 为数据库中文件主键
 $key = Storage::store($path, $filename="")
