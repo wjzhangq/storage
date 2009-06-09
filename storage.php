@@ -6,16 +6,17 @@
 
 class storage implements ArrayAccess
 {
-    constant MAX_SIZE = 2097152; //2M
+    const MAX_SIZE = 1000000; //1M, 请 SHOW VARIABLES LIKE 'max_allowed_packet'  参看是否超过mysql 默认配置
+    //const MAX_SIZE = 20;
     var $db = null;
     
     /**
      * 构造函数
      *
      */
-    function __constuct()
+    function __construct(&$db)
     {
-        $this->db = init_db();
+        $this->db = $db;
     }
     
     /**
@@ -23,46 +24,89 @@ class storage implements ArrayAccess
      * @param $path     string    存储文件路径
      * @param $filename string    文件原始名称
      * 
-     * @return $key
+     * @return $id
      */
     function store($path, $filename='')
     {
         
         //检查是否是文件
-        is_file($path) or throw(new Exception('the target is not a file(' . $path . ')'));
+        if (!is_file($path))
+        {
+            throw(new Exception('the target is not a file(' . $path . ')'));
+        }
+
         strlen($filename) > 0  or $filename = basename($path);
-        
+
         //获取信息
         $info = array(
             'filename'=> $filename,
             'filetype'=> $this->filetype($filename),
             'size' => filesize($path),
             'hash' => md5_file($path),
-            'id' => 0,
+            'ctime' => time(),
+            'mtime' => time(),
+            'cite' => 1,
             'clip' => 1,
         );
-        $info['clip'] = ceil($info['clip'] / self::MAX_SIZE); //修正clip
-        
+        $info['clip'] = ceil($info['size'] / self::MAX_SIZE); //修正clip
+
+        //
         //检查是否上传过
-        $id = $this->exists_by_info($info);
+        $post_info = $this[array('size'=>$info['size'], 'hash'=>$info['hash'])];
         
-        if ($id)
+        if ($post_info)
         {
-            //引用次数+1
-            $this->db['storage'][$id]['num'] ++;
+            $id = $post_info['id'];
+            //已经上传过, 更新引用次数以及更新时间
+            $this[$id] = array('cite'=>$post_info['cite'] + 1, 'mtime'=>time());
         }
         else
         {
-            //将附加信息插入storage表
             $id = $this->db['storage']->insert($info);
-            
-            $info['id'] = $id; //修正id
-            
-            //保存数据
-            $this->store_data($path, $id);
+            //保存文件
+            $this->store_data($path, $id, $info['clip']);
+
         }
         
         return $id;
+    }
+    
+    function restore($id, $path)
+    {
+        $info = $this[$id];
+        if (!$info)
+        {
+            throw (new Exception('file "' . $id . '" is not exist!'));
+        }
+        
+        if (is_file($path))
+        {
+            $hash = md5_file($path);
+            if ($info['hash'] == $hash)
+            {
+                return true;
+            }
+            else
+            {
+                @unlink($path);
+            }
+        }
+        
+        $fp = fopen($path, 'w');
+        if (!$fp)
+        {
+            throw(new Exception('open file fail!'));
+        }
+        
+        for ($i=0; $i < $info['clip']; $i++)
+        {
+            $sql = 'SELECT data FROM `storage_data` WHERE id=\'' . $id . '\' AND pos = \'' . $i . '\'';
+            $data = $this->db->getOne($sql);
+            fwrite($fp, $data);
+            unset($data); 
+        }
+        fclose($fp);
+        return true;
     }
     
     /**
@@ -70,26 +114,28 @@ class storage implements ArrayAccess
      * @param $path     string    存储文件路径
      * @param $info     array    文件原始名称
      * 
-     * @return $key
+     * 
      */
-    private function store_data($path, $id)
+    private function store_data($path, $id, $clip)
     {   
-        if (is_uploaded_file($path))
+        $fp = fopen($path, 'r');
+        if (!$fp)
         {
-            move_uploaded_file($path, $target_path) or throw(new Exception('move upload file failure!'));
-        }
-        else
-        {
-            rename($path, $target_path) or throw(new Exception('move file failure!'));
-        }
+            throw(new Exception('open file fail!'));
+        };
         
-        $clip = ceil(filesize($target_path) / self::MAX_SIZE);
-        $fp = fopen($target_path, 'r') or throw(new Exception('open file fail!'));
+        $sql = 'INSERT INTO `storage_data` SET id=' . $id . ', pos = ? , data = ?';
+        $sth = $this->db->prepare($sql);
         for ($i=0; $i < $clip; $i++)
         {
-            $sql = 'INSERT INTO `storage_data` SET id=' . $id . ', clip = ' . $i . ', data=\'' . addslashes(fread($fp, self::MAX_SIZE)) . '\'';
-            $this->db->query($sql);
-            unset($sql);
+            //$sql = 'INSERT INTO `storage_data` SET id=' . $id . ', pos = ' . $i . ', data=\'' . addslashes(fread($fp, self::MAX_SIZE)) . '\'';
+            if (!$sth->execute(array(0=>$i, 1=>fread($fp, self::MAX_SIZE))))
+            {
+                //回滚数据
+                $this->drop($id, true);
+                $error = $sth->errorInfo();
+                throw (new Exception($error[2]));
+            }
         }
         fclose($fp);
     }
@@ -98,7 +144,7 @@ class storage implements ArrayAccess
     //implements
     function offsetExists($offset)
     {
-        return isset($this->db['storage'][$offset]);
+        return $this->db['storage'][$offset];
     }
     
     function offsetGet($offset)
@@ -113,7 +159,8 @@ class storage implements ArrayAccess
     
     function offsetUnset($offset)
     {
-        return unset($this->db['storage'][$offset]);
+        //伪删除
+        $this->drop($offset,false);
     }
     
     //private
@@ -122,9 +169,20 @@ class storage implements ArrayAccess
         return end(explode('.',$str));
     }
     
-    private function exists_by_info($info)
+    function drop($id, $is_hard=false)
     {
-         return $this->db['storage']->exists(array('hash'=>$info['hash'], 'size'=>$info['size']));
+        if ($is_hard)
+        {
+            //物理删除
+            unset($this->db['storage'][$id]);
+            unset($this->db['storage_data'][$id]);
+        }
+        else
+        {
+            //伪删除
+            $info = $this[$id];
+            $this[$id] = array('mtime'=>time(), 'cite'=> $info['cite'] > 1 ? $info['cite'] -1 : 0);
+        }
     }
 }
 
