@@ -128,11 +128,13 @@ class storage implements ArrayAccess
         $sth = $this->db->prepare($sql);
         for ($i=0; $i < $clip; $i++)
         {
-            //$sql = 'INSERT INTO `storage_data` SET id=' . $id . ', pos = ' . $i . ', data=\'' . addslashes(fread($fp, self::MAX_SIZE)) . '\'';
-            if (!$sth->execute(array(0=>$i, 1=>fread($fp, self::MAX_SIZE))))
+            $sth->bindParam(1, $i, PDO::PARAM_INT);
+            $sth->bindParam(2, fread($fp, self::MAX_SIZE), PDO::PARAM_STR);
+            if (!$sth->execute())
             {
                 //回滚数据
                 $this->drop($id, true);
+                fclose($fp);
                 $error = $sth->errorInfo();
                 throw (new Exception($error[2]));
             }

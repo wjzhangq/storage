@@ -1,48 +1,154 @@
 <?php
-
-class db implements ArrayAccess
+/**
+ * pdo 的扩展类
+ * author: wjzhangq <wjzhangq@126.com>
+ */
+ 
+class db extends PDO implements ArrayAccess, Countable
 {
-    public $sqls = array();
-    public $pdo = null;
-
-    function __construct($key)
+    protected $tables; //db中所有表
+    
+    //初始化
+    function __construct($dsn, $username=null, $password=null, $driver_options=null)
     {
-        $this->pdo = call_user_func_array(array(new ReflectionClass('PDO'), 'newInstance'), $args);
+        parent::__construct($dsn, $username, $password, $driver_options);
+        
+        $this->init_tables();
     }
-
-    public function begin()
+    
+    //implements ArrayAccess
+    function offsetExists($offset)
     {
-        return $this->pdo->beginTransaction();
+        return isset($this->tables[$offset]);
     }
-
-    public function rollBack()
+    
+    function offsetGet($offset)
     {
-        return $this->pdo->rollBack();
+        $ret_val = null;
+        if (isset($this->tables[$offset]))
+        {
+            if (!is_object($this->tables[$offset]))
+            {
+                $this->tables[$offset] = new db_table($this, $offset);
+            }
+            
+            $ret_val = $this->tables[$offset];
+        }
+        
+        return $ret_val;
     }
-
-    public function commit()
+    
+    function offsetSet($offset, $value)
     {
-        return $this->pdo->commit();
+        //nothing
+        //todo: add new table
     }
-
-    public function exec($sql)
+    
+    function offsetUnset($offset)
+    {
+        //nothing
+        //todo: drop a table
+    }
+    
+    //implements Countable
+    function count()
+    {
+        return count($this->tables);
+    }
+    
+    //common function
+    /*获取唯一元素*/
+    function getOne()
     {
         $args = func_get_args();
-        $sql = array_shift($args);
-        // $this->sqls[] = $sql;
-        if ($args)
+        
+        //加limit
+        if (stripos($args[0], 'limit') === false)
         {
-            return $this->execute($sql, $args)->rowCount();
+            $args[0] .= ' LIMIT 1';
+        }
+        
+        $sth = $this->query($args);
+        
+        return $sth->fetchColumn(); 
+    }
+    
+    /*获取一列元素*/
+    function getCol()
+    {
+        $args = func_get_args();
+
+        $sth = $this->query($args);
+        
+        return $sth->fetchAll(PDO::FETCH_COLUMN, 0);
+    }
+    
+    /*获取一行元素*/
+    function getRow()
+    {
+        $args = func_get_args();
+        
+        //加limit
+        if (stripos($args[0], 'limit') === false)
+        {
+            $args[0] .= ' LIMIT 1';
+        }
+        
+        $sth = $this->query($args);
+        
+        return $sth->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    /*获取一组元素*/
+    function getAll()
+    {
+        $args = func_get_args();
+        $sth = $this->query($args);
+        
+        return $sth->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    
+    //修正函数
+    function query()
+    {
+        $args = func_get_args();
+
+        if (!isset($args[0]))
+        {
+            throw new Exception('less param for query');
         }
 
-        return $this->pdo->exec($sql);
-    }
+        switch (count($args))
+        {
+            case 1:
+                if (is_array($args[0]))
+                {
+                    $sql = $args[0][0];
+                    $param = isset($args[0][1]) ? $args[0][1] : array();
+                }
+                elseif(is_string($args[0]))
+                {
+                    $sql = $args[0];
+                    $param = array();
+                }
+                else
+                {
+                    throw  new Exception ('Unsuport param for query!');
+                }
+                break;
+            case 2:
+                $sql = $args[0];
+                $param = $args[1];
+                break;
+            default:
+                throw  new Exception ('Unsuport param for query!');
+                break;
+        }
 
-    public function execute($sql, $param=array())
-    {
         if ($param)
         {
-            $sth = $this->pdo->prepare($sql);
+            $sth = $this->prepare($sql, array(PDO::ATTR_CURSOR => PDO::CURSOR_FWDONLY));
             if (!$sth->execute($param))
             {
                 throw new Exception("Error sql prepare:$sql");
@@ -50,416 +156,144 @@ class db implements ArrayAccess
         }
         else
         {
-            if (!$sth = $this->pdo->query($sql))
+            if (!$sth = parent::query($sql))
             {
                 throw new Exception("Error sql query:$sql");
             }
         }
-
+        
         return $sth;
     }
-
-    public function query($sql)
-    {
-        $args = func_get_args();
-        $sql = array_shift($args);
-        // $this->sqls[] = $sql;
-        return $this->execute($sql, $args);
-    }
-
-    public function getOne($sql)
-    {
-        $args = func_get_args();
-        $sql = array_shift($args);
-
-        if (stripos($sql, 'limit') === false)
-        {
-            $sql .= ' LIMIT 1';
-        }
-
-        $query = $this->execute($sql, $args);
-
-        return $query->fetchColumn();
-    }
-
-    public function getCol($sql)
-    {
-        $args = func_get_args();
-        $sql = array_shift($args);
-
-        $query = $this->execute($sql, $args);
-
-        return $query->fetchAll(PDO::FETCH_COLUMN, 0);
-    }
-
-    public function getAll($sql)
-    {
-        $args = func_get_args();
-        $sql = array_shift($args);
-
-        $query = $this->execute($sql, $args);
-
-        return $query->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    public function getRow($sql)
-    {
-        $args = func_get_args();
-        $sql = array_shift($args);
-
-        $query = $this->execute($sql, $args);
-
-        return $query->fetch(PDO::FETCH_ASSOC);
-    }
-
-    public function lastInsertId()
-    {
-        return $this->pdo->lastInsertId();
-    }
     
-    public function getSlice($table, $fields=array(), $where=array(), $order=array(),  $limit=0)
+    //私有函数
+    private function init_tables()
     {
-        $sql = $this->gen_sql($table, $fields, $where, $order, $limit);
-        
-        return $this->getAll($sql);
-    }
-    
-    function getSliceRow($table, $fields=array(), $where=array(), $order=array())
-    {
-        $sql = $this->gen_sql($table, $fields, $where, $order, 1);
-        
-        return $this->getRow($sql);
-    }
-    
-    function getSliceCol($table, $fields='', $where=array(), $order=array(), $limit=0)
-    {
-        $fields = $fields ? array(0=>$fields) : array();
-        $sql = $this->gen_sql($table, $fields, $where, $order, $limit);
-        
-        return $this->getCol($sql);
-    }
-    
-    function getSliceOne($table, $fields='', $where=array(), $order=array())
-    {
-        $fields = $fields ? array(0=>$fields) : array();
-
-        $sql = $this->gen_sql($table, $fields, $where, $order, 1);
-         
-        return $this->getOne($sql); 
-    }
-    
-    protected function gen_sql($table, $fields=array(), $where=array(), $order=array(),  $limit=0)
-    {
-        $sql = 'SELECT ';
-        if ($fields)
-        {
-            $sql .= '`'. implode('`, `', $fields) . '`';
-        }
-        else
-        {
-            $sql .= ' * ';
-        }
-        
-        $sql .= ' FROM ' . $table;
-        
-        if ($where)
-        {
-            $sql .= $this->gen_where($where);
-        }
-        
-        if ($order)
-        {
-            $set1 = array();
-            foreach($order as $key=>$val)
-            {
-                $set1[] = '`' . $key . '` ' . strtoupper($val);
-            }
-            $sql .= " ORDER BY " . implode(', ', $set1);
-        }
-        
-        if ($limit)
-        {
-            if (is_array($limit))
-            {
-                $sql.=" LIMIT " . intval($limit[0]) . ', ' . intval($limit[1]);
-            }
-            else
-            {
-                $sql .=" LIMIT " . intval($limit);
-            }
-            
-        }
-        
-        return $sql;
-    }
-    
-    function gen_where($where)
-    {
-        $set = array();
-        foreach ($where as $key => $val)
-        {
-            if (is_array($val))
-            {
-                $set[] = $key . ' IN (\'' . implode('\', \'', $val) . '\')';
-            }
-            else
-            {
-                $set[] = $key . '=\'' . $val . '\'';
-            }
-        }
-        $sql = " WHERE " . implode(' AND ', $set);
-        
-        return $sql;        
-    }
-    
-    function insert($table, $data)
-    {
-        $tbl_fields = $this->getfield($table);
-        $fields = $values = array();
-        foreach($tbl_fields as $v)
-        {
-            if (isset($data[$v]))
-            {
-                $fields[] = $v;
-                $values[] = $data[$v];
-            }
-        }
- 
-        if ($fields)
-        {
-            $sql = 'INSERT INTO ' . $table . ' (' . implode(', ', $fields) . ' ) VALUES ( \'' . implode('\' ,\'', $values) . '\')';
-
-            $this->execute($sql);
-
-            return $this->lastInsertId();
-        }
-        else
-        {
-            return false;
-        }
-    }
-    
-    function update($table, $data, $where=array())
-    {
-        $tbl_fields = $this->getfield($table);
-        $set = array();
-        foreach($tbl_fields as $v)
-        {
-            if (isset($data[$v]))
-            {
-                $set[] = $v . '=\'' . $data[$v] . '\'';
-            }
-        }
-        
-        if ($set)
-        {
-            $sql = "UPDATE " . $table . ' SET ' . implode(', ', $set);
-            $param = array();
-            if ($where)
-            {
-                $sql .= $this->gen_where($where);               
-            }
-
-            return $this->execute($sql)->rowCount();
-            
-        }
-        else
-        {
-            return false;
-        }       
-    }
-    
-    function getCount($table, $where=array())
-    {
-        $sql = 'SELECT COUNT(*) FROM ' . $table;
-        if ($where)
-        {
-            $sql .= $this->gen_where($where);        
-        }
-
-        return $this->getOne($sql);
-    }
-    
-    function delete($table, $where=array())
-    {
-        $sql = 'DELETE FROM ' . $table;
-        if ($where)
-        {
-            $sql .= $this->gen_where($where);
-        }
-
-        return $this->execute($sql)->rowCount();
-    }
-    
-    public function getField($table)
-    {
-        static $tables = array();
-        if (!isset($tables[$table]))
-        {
-            $sql = "DESC " . $table;
-
-            $tables[$table] = $this->getCol($sql);
-        }
-
-        return $tables[$table];
-    }
-    
-    
-    //implements
-    function offsetExists($offset)
-    {
-        $ret_val = false;
-        if (isset($this->tables[$offset]))
-        {
-            $ret_val = true;
-        }
-        else
-        {
-            try
-            {
-                $tmp = new db_table($offset);
-            }
-            catch($e)
-            {
-                $tmp = null;
-            }
-            if ($tmp)
-            {
-                $this->tables[$offset] = $tmp;
-                $ret_val = true;
-            }
-        }
-        
-        return $ret_val;
-    }
-    
-    function offsetGet($offset)
-    {
-        return $this->db['storage'][$offset];
-    }
-    
-    function offsetSet($offset, $value)
-    {
-        return $this->db['storage'][$offset] = $value;
-    }
-    
-    function offsetUnset($offset)
-    {
-        return unset($this->db['storage'][$offset]);
+        $col = $this->getCol("SHOW TABLES");
+        $this->tables = array_flip($col);
     }
 }
 
 
-class db_table implements ArrayAccess
+class db_table implements ArrayAccess, Countable
 {
-    var $table_name;
-    var $table_fileds;
-    var $table_key;
-    var $db;
+    protected $table_name; // 表名称
+    protected $table_fileds; //表字段
+    protected $table_key; //表主键
+    protected $db; //db
     
-    function __construct($table_name, &$db)
+    function __construct(&$db, $table_name)
     {
-        $sql = "DESC " . $table_name;
-        $this->table_fileds = $db->getCol($sql) or die('Can not found table' . $table_name);
-        $this->db= $db;
+        $this->db= $db; //引用db
         $this->table_name = $table_name;
-        $sql = "SHOW INDEX FROM " . $table_name . " WHERE Key_name = 'PRIMARY'";
+        
+        //获取字段
+        $sql = 'DESC `'.$this->table_name.'`';
+        $tmp = $db->getCol($sql);
+        foreach ($tmp as $v)
+        {
+            $this->table_fileds[$v] = ':' . $v;
+        }
+        
+        //获取主键
+        $sql = 'SHOW INDEX FROM `' . $this->table_name . '` WHERE Key_name = \'PRIMARY\'#no limit';
         $tmp = $db->getRow($sql);
         $this->table_key = isset($tmp['Column_name']) ? $tmp['Column_name'] : '';        
     }
     
+    //插入数据
     function insert($data)
     {
-        $fields = $values = array();
-        foreach($this->table_fileds as $v)
-        {
-            if ($this->table_key == $v) continue; //主键过滤
-            
-            if (isset($data[$v]))
-            {
-                $fields[] = $v;
-                $values[] = $data[$v];
-            }
-        }
+        $this->offsetSet(null, $data);
  
-        if ($fields)
-        {
-            $sql = 'INSERT INTO ' . $this->table_name . ' (' . implode(', ', $fields) . ' ) VALUES ( \'' . implode('\' ,\'', $values) . '\')';
-
-            $this->db->execute($sql);
-            
-            $ret_val = $this->table_key ? $this->db->lastInsertId() : true; //有主键返回主键值
-
-            return $ret_val;
-        }
-        else
-        {
-            return false;
-        }
+        return $this->table_key ? $this->db->lastInsertId() : null; //有主键返回主键值
     }
     
     
     //implements
     function offsetExists($offset)
     {
-        $ret_val = false;
-        if ($this->table_key)
-        {
-            $sql = "SELECT COUNT(*) FROM " . $this->table_name . " WHERE " . $this->table_key . " = '" . $offset . "'";
-            
-            $ret_val = (bool) $this->db->getOne($sql);
-        }
+        $where = $this->offset_parse($offset);
         
-        return $ret_val;
+        $sql = 'SELECT COUNT(*) FROM `' .$this->table_name. '` WHERE ' . $where;
+        
+        return (bool) $this->db->getOne($sql);
+        
     }
     
     function offsetGet($offset)
     {
-        $ret_val = false;
-        if ($this->table_key)
-        {
-            $sql = "SELECT * FROM " . $this->table_name . " WHERE " . $this->table_key . " = '" . $offset . "'";
-            $ret_val = $this->db->getRow($sql);
-        }
+        $where = $this->offset_parse($offset);
         
-        return $ret_val;
+        $sql = 'SELECT * FROM `'. $this->table_name .'` WHERE ' . $where;
+        
+        return $this->db->getRow($sql);
     }
     
     function offsetSet($offset, $value)
     {
-        $ret_val = false;
-        if ($this->table_key)
+        $tmp = array_intersect_key($this->table_fileds, $value);
+        if ($tmp)
         {
-            $set= array();
-            foreach($this->table_fileds as $v)
+            if (isset($offset))
             {
-                if ($this->table_key == $v) continue; //主键过滤
-
-                if (isset($data[$v]))
-                {
-                    $set[] = $v . '=\'' . $data[$v] . '\'';
-                }
+                $where = $this->offset_parse($offset);
+                $sql = 'UPDATE `'. $this->table_name . '` SET ' . rawurldecode(http_build_query($tmp, '', ',')) . ' WHERE ' . $where;
+                
             }
-            
-            if ($set)
+            else
             {
-                $sql = "UPDATE " . $this->table_name . ' SET ' . implode(', ', $set) .  " WHERE " . $this->table_key . " = '" . $offset . "'";
-                $ret_val = $this->query($sql);
-            }           
+                $sql = 'INSERT INTO `'.$this->table_name.'` SET ' . rawurldecode(http_build_query($tmp, '', ','));
+            }
+            $param = array_intersect_key($value, $tmp);
+            $this->db->query($sql, $param);
         }
-        
-        return $ret_val;
     }
     
     function offsetUnset($offset)
     {
-        $ret_val = false;
-        if ($this->table_key)
+        $where = $this->offset_parse($offset);
+        $sql = 'DELETE FROM `'.$this->table_name.'` WHERE ' . $where;
+
+        return $this->db->query($sql);
+    }
+    
+    function count()
+    {
+        return 10;
+    }
+    
+    //私有函数
+    private function offset_parse($offset)
+    {
+        $where = '';
+        switch (gettype($offset))
         {
-            $sql = "DELETE FROM " . $this->table_name  . " WHERE " . $this->table_key . " = '" . $offset . "'";
-            $ret_val = $this->db->query($sql);
+            case 'integer':
+            case 'string':
+                if ($this->table_key)
+                {
+                    $where = '`' . $this->table_key . '`= \'' . addcslashes($offset, '\'') . '\'';
+                }
+                break;
+            case 'array':
+                $set = array();
+                foreach ($offset as $key => $val)
+                {
+                    if (is_array($val))
+                    {
+                        $set[] = '`' . $key . '` IN (\'' . implode('\', \'', $val) . '\')';
+                    }
+                    else
+                    {
+                        $set[] = '`' . $key . '`=\'' . addcslashes($val, '\'') . '\'';
+                    }
+                }
+                $where = implode(' AND ', $set);
+                break;
+            default:
         }
-        return $ret_val;
+        
+        return $where;
     }
 }
 ?>

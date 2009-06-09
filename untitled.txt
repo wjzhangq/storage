@@ -3,11 +3,11 @@
 
 CREATE TABLE `storage_data`
 (
-`id` INT(10) COMMENT '文件id和pos组成双主键',
+`id` INT(10) COMMENT '文件id',
 `pos` INT(3) COMMENT '文件位置',
-`data` MEDIUMBLOB COMMENT '数据存储',
+`data` BLOB COMMENT '数据存储',
 PRIMARY KEY  (`id`,`pos`)
-) ENGINE=MyISAM;
+);
 
 
 
@@ -21,7 +21,6 @@ CREATE TABLE `storage`
 `filename` VARCHAR(255) COMMENT '原文件名称',
 `ctime` INT(11) COMMENT '创建时间',
 `mtime` INT(11) COMMENT '更新时间',
-`filetype` VARCHAR(4) COMMENT '文件后缀',
 PRIMARY KEY (`id`)
 ) ENGINE=MyISAM;
 
